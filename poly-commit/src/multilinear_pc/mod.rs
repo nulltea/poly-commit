@@ -70,15 +70,13 @@ impl<E: Pairing> MultilinearPC<E> {
             start += size;
         }
 
-        // uncomment to measure the time for calculating vp
-        // let vp_generation_timer = start_timer!(|| "VP generation");
-        let g_mask = g_table.batch_mul(&t);
-        // end_timer!(vp_generation_timer);
+        let h_table = BatchMulPreprocessing::new(h, num_vars);
+        let h_mask = h_table.batch_mul(&t);
 
         UniversalParams {
             num_vars,
             g: g.into_affine(),
-            g_mask,
+            h_mask,
             h: h.into_affine(),
             powers_of_g,
             powers_of_h,
@@ -105,7 +103,7 @@ impl<E: Pairing> MultilinearPC<E> {
             nv: supported_num_vars,
             g: params.g,
             h: params.h,
-            g_mask_random: (&params.g_mask[to_reduce..]).to_vec(),
+            h_mask_random: (&params.h_mask[to_reduce..]).to_vec(),
         };
         (ck, vk)
     }
@@ -159,9 +157,9 @@ impl<E: Pairing> MultilinearPC<E> {
                 .map(|x| q[k][x >> 1].into_bigint()) // fine
                 .collect();
 
-            let pi_h =
-                <E::G2 as VariableBaseMSM>::msm_bigint(&ck.powers_of_h[i], &scalars).into_affine(); // no need to move outside and partition
-            proofs.push(pi_h);
+            let pi_g =
+                <E::G1 as VariableBaseMSM>::msm_bigint(&ck.powers_of_g[i], &scalars).into_affine(); // no need to move outside and partition
+            proofs.push(pi_g);
         }
 
         Proof { proofs }
@@ -178,21 +176,21 @@ impl<E: Pairing> MultilinearPC<E> {
     ) -> bool {
         let left = E::pairing(commitment.g_product.into_group() - &vk.g.mul(value), vk.h);
 
-        let g_mul = vk.g.into_group().batch_mul(point);
+        let h_mul: Vec<E::G2Affine> = vk.h.into_group().batch_mul(point);
 
-        let pairing_lefts: Vec<_> = (0..vk.nv)
-            .map(|i| vk.g_mask_random[i].into_group() - &g_mul[i])
+        let pairing_rights: Vec<_> = (0..vk.nv)
+            .map(|i| vk.h_mask_random[i].into_group() - &h_mul[i])
             .collect();
-        let pairing_lefts: Vec<E::G1Affine> = E::G1::normalize_batch(&pairing_lefts);
-        let pairing_lefts: Vec<E::G1Prepared> = pairing_lefts
+        let pairing_rights: Vec<E::G2Affine> = E::G2::normalize_batch(&pairing_rights);
+        let pairing_rights: Vec<E::G2Prepared> = pairing_rights
             .into_iter()
-            .map(|x| E::G1Prepared::from(x))
+            .map(|x| E::G2Prepared::from(x))
             .collect();
 
-        let pairing_rights: Vec<E::G2Prepared> = proof
+        let pairing_lefts: Vec<E::G1Prepared> = proof
             .proofs
             .iter()
-            .map(|x| E::G2Prepared::from(*x))
+            .map(|x| E::G1Prepared::from(*x))
             .collect();
 
         let right = E::multi_pairing(pairing_lefts, pairing_rights);
